@@ -1,0 +1,15 @@
+{
+  "name": "arize-test-eval-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Test API for Arize remote evaluators, agent-as-a-judge, and skills",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vercel/node": "^3.0.0",
+    "typescript": "^5.0.0"
+  }
+}
