@@ -5,6 +5,5 @@
     { "source": "/health", "destination": "/api/health" },
     { "source": "/requests", "destination": "/api/requests" }
   ],
-  "buildCommand": "",
-  "outputDirectory": "."
+  "buildCommand": ""
 }
