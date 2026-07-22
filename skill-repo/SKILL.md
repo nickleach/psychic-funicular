@@ -1,11 +1,12 @@
-# arize-test-eval skill
+# star-wars-eval skill
 
 This skill gives the Agent-as-a-Judge harness access to a scoring tool endpoint
-hosted by the arize-test-eval-api.
+for evaluating a Star Wars chatbot's responses against canon accuracy, relevance,
+hallucination, and in-character criteria.
 
 ## Tool: score
 
-Score an assistant response against a named criteria.
+Score a Star Wars chatbot's output against a named criterion.
 
 ### Endpoint
 
@@ -20,8 +21,8 @@ Authorization: Bearer $TEST_API_TOKEN   # omit if EVAL_AUTH_TOKEN is not set
 ```json
 {
   "record_id": "<span or example id>",
-  "criteria": "<helpfulness|relevance|accuracy|tone>",
-  "text": "<the assistant output to score>"
+  "criteria": "<lore_accuracy|hallucination|relevance|in_character>",
+  "text": "<the chatbot output to score>"
 }
 ```
 
@@ -30,50 +31,52 @@ Authorization: Bearer $TEST_API_TOKEN   # omit if EVAL_AUTH_TOKEN is not set
 ```json
 {
   "label": "pass",
-  "score": 0.9,
-  "rationale": "Response is actionable and directly addresses the request.",
+  "score": 1.0,
+  "rationale": "Answer is consistent with Star Wars canon.",
   "source": "arize-test-eval-api/tool/score",
-  "criteria": "helpfulness"
+  "criteria": "lore_accuracy"
 }
 ```
-
-### Fields
-
-| Field | Description |
-|---|---|
-| `label` | `"pass"` or `"fail"` |
-| `score` | Float 0–1 |
-| `rationale` | One-sentence reason |
-| `source` | Always `arize-test-eval-api/tool/score` |
-| `criteria` | Echoed from request |
 
 ### Supported criteria
 
 | Value | What it checks |
 |---|---|
-| `helpfulness` | Response is actionable and addresses the request |
-| `relevance` | Response stays on topic |
-| `accuracy` | Response appears factually correct |
-| `tone` | Response uses appropriate, professional tone |
+| `lore_accuracy` | All stated facts match Star Wars canon (films, TCW, Rebels) |
+| `hallucination` | Response does not invent non-canon characters, events, or planets |
+| `relevance` | Response directly addresses the user's Star Wars question |
+| `in_character` | Response maintains the bot's Star Wars persona (e.g. Yoda syntax) |
 
 ### Usage instructions for the harness
 
-When evaluating a span, extract the assistant's output text and call this tool
-with the appropriate criteria. Write the returned `label` and `score` as the
-eval result for that span.
+When evaluating a Star Wars chatbot span, extract the assistant's output text
+and call this tool with the appropriate criterion. Write the returned `label`
+and `score` as the eval result; use `rationale` as the `explanation`.
 
-Example:
+Example workflow for a lore accuracy check:
 
 ```
 call score({
   record_id: span.id,
-  criteria: "helpfulness",
+  criteria: "lore_accuracy",
   text: span.attributes["output.value"]
 })
-→ { label: "pass", score: 0.9, rationale: "..." }
+→ { label: "pass", score: 1.0, rationale: "Answer is consistent with Star Wars canon." }
 ```
 
-Use the `rationale` field as the eval `explanation`.
+For hallucination checks on spans where the user asked about specific characters:
+
+```
+call score({
+  record_id: span.id,
+  criteria: "hallucination",
+  text: span.attributes["output.value"]
+})
+→ { label: "fail", score: 0.0, rationale: "Answer invents or fabricates Star Wars facts not found in canon." }
+```
+
+You may run multiple criteria on the same span and write separate eval attributes
+(e.g. `eval.lore_accuracy.label`, `eval.hallucination.label`).
 
 ### Error handling
 

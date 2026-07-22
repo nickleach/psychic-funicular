@@ -1,4 +1,5 @@
 import type { EvalResult } from "./types";
+import { getCriterion, DEFAULT_CRITERIA_ID } from "./criteria";
 
 interface LLMConfig {
   provider: "openai" | "anthropic";
@@ -9,27 +10,31 @@ function getLLMConfig(): LLMConfig {
   const provider =
     (process.env.LLM_PROVIDER as "openai" | "anthropic") ?? "openai";
 
-  let defaultModel: string;
-  if (provider === "anthropic") {
-    defaultModel = "claude-3-haiku-20240307";
-  } else {
-    defaultModel = "gpt-4o-mini";
-  }
+  const defaultModel =
+    provider === "anthropic" ? "claude-3-haiku-20240307" : "gpt-4o-mini";
 
   return { provider, model: process.env.LLM_MODEL ?? defaultModel };
 }
 
-const SYSTEM_PROMPT = `You are an evaluator. Given the user input and assistant output, score the response.
-Return ONLY a JSON object with these fields:
-- label: "pass" or "fail"
-- score: float between 0 and 1
-- explanation: one sentence rationale
+function buildSystemPrompt(criteriaId: string): string {
+  const criterion = getCriterion(criteriaId);
+  return `You are an expert Star Wars canon judge evaluating a chatbot's response.
 
-No other text.`;
+Criterion: ${criterion.label}
+Task: ${criterion.judgeInstruction}
+
+Return ONLY a JSON object with exactly these fields:
+- label: "pass" or "fail"
+- score: float between 0 and 1 (1 = perfect, 0 = completely wrong)
+- explanation: one concise sentence explaining your verdict, referencing specific Star Wars details where relevant
+
+No other text outside the JSON object.`;
+}
 
 async function callOpenAI(
   input: Record<string, unknown>,
-  model: string
+  model: string,
+  systemPrompt: string
 ): Promise<Response> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY not set");
@@ -44,20 +49,21 @@ async function callOpenAI(
       model,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `Input fields:\n${JSON.stringify(input, null, 2)}`,
+          content: `Chatbot exchange to evaluate:\n${JSON.stringify(input, null, 2)}`,
         },
       ],
-      max_tokens: 200,
+      max_tokens: 250,
     }),
   });
 }
 
 async function callAnthropic(
   input: Record<string, unknown>,
-  model: string
+  model: string,
+  systemPrompt: string
 ): Promise<Response> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
@@ -71,14 +77,14 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: [
         {
           role: "user",
-          content: `Input fields:\n${JSON.stringify(input, null, 2)}`,
+          content: `Chatbot exchange to evaluate:\n${JSON.stringify(input, null, 2)}`,
         },
       ],
-      max_tokens: 200,
+      max_tokens: 250,
     }),
   });
 }
@@ -99,18 +105,21 @@ function parseVerdict(raw: string): EvalResult {
 
 /**
  * Calls the configured LLM provider and returns a parsed EvalResult.
+ * criteriaId selects the Star Wars judge prompt; defaults to lore_accuracy.
  * Throws on provider errors; callers should map to 5xx.
  */
 export async function runLLMEval(
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  criteriaId: string = DEFAULT_CRITERIA_ID
 ): Promise<EvalResult> {
   const { provider, model } = getLLMConfig();
+  const systemPrompt = buildSystemPrompt(criteriaId);
 
   let response: Response;
   if (provider === "anthropic") {
-    response = await callAnthropic(input, model);
+    response = await callAnthropic(input, model, systemPrompt);
   } else {
-    response = await callOpenAI(input, model);
+    response = await callOpenAI(input, model, systemPrompt);
   }
 
   if (response.status === 429) {
@@ -130,9 +139,7 @@ export async function runLLMEval(
     const content = data.content as Array<{ type: string; text: string }>;
     rawText = content?.[0]?.text ?? "";
   } else {
-    const choices = data.choices as Array<{
-      message: { content: string };
-    }>;
+    const choices = data.choices as Array<{ message: { content: string } }>;
     rawText = choices?.[0]?.message?.content ?? "";
   }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test script for arize-test-eval-api
+# Test script for the Star Wars Chatbot Eval API
 # Usage: ./scripts/test.sh [BASE_URL] [AUTH_TOKEN]
 #
 # Defaults to http://localhost:3000 for local vercel dev.
@@ -10,7 +10,6 @@ set -euo pipefail
 BASE="${1:-http://localhost:3000}"
 TOKEN="${2:-${EVAL_AUTH_TOKEN:-}}"
 
-# Build auth header
 if [[ -n "$TOKEN" ]]; then
   AUTH=(-H "Authorization: Bearer $TOKEN")
 else
@@ -36,8 +35,27 @@ check() {
   fi
 }
 
+EVAL_PAYLOAD() {
+  local evaluator="$1"
+  local question="${2:-Who trained Anakin Skywalker?}"
+  local answer="${3:-Obi-Wan Kenobi was Anakin Skywalker's Jedi Master.}"
+  cat <<EOF
+{
+  "metadata": {
+    "request_id": "test-$(date +%s)",
+    "evaluator": "$evaluator",
+    "record_id": "span-sw-001"
+  },
+  "input": {
+    "input":  "$question",
+    "output": "$answer"
+  }
+}
+EOF
+}
+
 echo ""
-echo "=== Arize Test Eval API — test suite ==="
+echo "=== Star Wars Chatbot Eval API — test suite ==="
 echo "    BASE: $BASE"
 echo "    AUTH: ${TOKEN:+(set)}"
 echo ""
@@ -52,25 +70,7 @@ echo ""
 
 # ── /evaluate: stub modes ─────────────────────────────────────────────────────
 echo "--- /evaluate — stub modes"
-
-EVAL_PAYLOAD() {
-  local evaluator="$1"
-  cat <<EOF
-{
-  "metadata": {
-    "request_id": "test-$(date +%s)",
-    "evaluator": "$evaluator",
-    "record_id": "span-001"
-  },
-  "input": {
-    "input": "Which restaurants deliver?",
-    "output": "Olio e Piu offers delivery via DoorDash."
-  }
-}
-EOF
-}
-
-for mode in stub-pass stub-fail keyword; do
+for mode in stub-pass stub-fail; do
   resp=$(curl -s -o /tmp/eval_body.txt -w "%{http_code}" \
     -X POST "$BASE/evaluate" \
     -H "Content-Type: application/json" \
@@ -82,27 +82,25 @@ for mode in stub-pass stub-fail keyword; do
 done
 echo ""
 
-# ── /evaluate: keyword scoring — should fail (no delivery keyword) ────────────
-echo "--- /evaluate — keyword fail (no delivery term)"
-PAYLOAD_NO_DELIVERY=$(cat <<'EOF'
-{
-  "metadata": {
-    "request_id": "test-no-delivery",
-    "evaluator": "keyword",
-    "record_id": "span-002"
-  },
-  "input": {
-    "input": "What time does the store open?",
-    "output": "The store opens at 9am."
-  }
-}
-EOF
-)
+# ── /evaluate: keyword — pass (answer mentions "Jedi") ───────────────────────
+echo "--- /evaluate — keyword (should pass — contains Jedi lore)"
 resp=$(curl -s -o /tmp/eval_body.txt -w "%{http_code}" \
   -X POST "$BASE/evaluate" \
   -H "Content-Type: application/json" \
   "${AUTH[@]}" \
-  -d "$PAYLOAD_NO_DELIVERY")
+  -d "$(EVAL_PAYLOAD "keyword" "Who is Luke Skywalker?" "Luke is a Jedi Knight who destroyed the Death Star.")")
+body=$(cat /tmp/eval_body.txt)
+check "evaluate/keyword-pass" "200" "$resp" "$body"
+echo "       $body"
+echo ""
+
+# ── /evaluate: keyword — fail (answer has no Star Wars terms) ────────────────
+echo "--- /evaluate — keyword (should fail — no lore terms)"
+resp=$(curl -s -o /tmp/eval_body.txt -w "%{http_code}" \
+  -X POST "$BASE/evaluate" \
+  -H "Content-Type: application/json" \
+  "${AUTH[@]}" \
+  -d "$(EVAL_PAYLOAD "keyword" "What is the capital of France?" "Paris.")")
 body=$(cat /tmp/eval_body.txt)
 check "evaluate/keyword-fail" "200" "$resp" "$body"
 echo "       $body"
@@ -136,19 +134,19 @@ for mode_status in "force-401:401" "force-403:403" "force-429:429" "force-500:50
 done
 echo ""
 
-# ── /evaluate: slow mode via query param ─────────────────────────────────────
-echo "--- /evaluate — slow-500 via ?mode= query param"
+# ── /evaluate: criteria via query param (llm mode skipped without key) ───────
+echo "--- /evaluate — slow-300 (via ?mode= query param)"
 resp=$(curl -s -o /tmp/eval_body.txt -w "%{http_code}" \
-  -X POST "$BASE/evaluate?mode=slow-500" \
+  -X POST "$BASE/evaluate?mode=slow-300" \
   -H "Content-Type: application/json" \
   "${AUTH[@]}" \
   -d "$(EVAL_PAYLOAD "any-evaluator")")
 body=$(cat /tmp/eval_body.txt)
-check "evaluate/slow-500" "200" "$resp" "$body"
+check "evaluate/slow-300" "200" "$resp" "$body"
 echo "       $body"
 echo ""
 
-# ── /evaluate: auth check (only if token set) ─────────────────────────────────
+# ── /evaluate: bad auth ───────────────────────────────────────────────────────
 if [[ -n "$TOKEN" ]]; then
   echo "--- /evaluate — bad auth (should 401)"
   resp=$(curl -s -o /tmp/eval_body.txt -w "%{http_code}" \
@@ -161,27 +159,55 @@ if [[ -n "$TOKEN" ]]; then
   echo ""
 fi
 
-# ── /tool/score ───────────────────────────────────────────────────────────────
-echo "--- /tool/score"
-TOOL_PAYLOAD=$(cat <<'EOF'
-{
-  "record_id": "span-001",
-  "criteria": "helpfulness",
-  "text": "You can order delivery through DoorDash or Uber Eats. The restaurant usually delivers in 30-45 minutes."
-}
-EOF
-)
+# ── /tool/score — lore_accuracy ──────────────────────────────────────────────
+echo "--- /tool/score — lore_accuracy (should pass)"
 resp=$(curl -s -o /tmp/eval_body.txt -w "%{http_code}" \
   -X POST "$BASE/tool/score" \
   -H "Content-Type: application/json" \
   "${AUTH[@]}" \
-  -d "$TOOL_PAYLOAD")
+  -d '{
+    "record_id": "span-sw-001",
+    "criteria": "lore_accuracy",
+    "text": "Qui-Gon Jinn discovered midi-chlorians and was Obi-Wan Kenobi'\''s master before his death on Naboo."
+  }')
 body=$(cat /tmp/eval_body.txt)
-check "tool/score" "200" "$resp" "$body"
+check "tool/score/lore_accuracy" "200" "$resp" "$body"
 echo "       $body"
 echo ""
 
-# ── /tool/score: missing text ─────────────────────────────────────────────────
+# ── /tool/score — hallucination ──────────────────────────────────────────────
+echo "--- /tool/score — hallucination (should pass — no fabrications)"
+resp=$(curl -s -o /tmp/eval_body.txt -w "%{http_code}" \
+  -X POST "$BASE/tool/score" \
+  -H "Content-Type: application/json" \
+  "${AUTH[@]}" \
+  -d '{
+    "record_id": "span-sw-002",
+    "criteria": "hallucination",
+    "text": "Darth Vader is the Sith Lord formerly known as Anakin Skywalker, apprentice to Emperor Palpatine."
+  }')
+body=$(cat /tmp/eval_body.txt)
+check "tool/score/hallucination" "200" "$resp" "$body"
+echo "       $body"
+echo ""
+
+# ── /tool/score — in_character ───────────────────────────────────────────────
+echo "--- /tool/score — in_character (should fail — breaks character)"
+resp=$(curl -s -o /tmp/eval_body.txt -w "%{http_code}" \
+  -X POST "$BASE/tool/score" \
+  -H "Content-Type: application/json" \
+  "${AUTH[@]}" \
+  -d '{
+    "record_id": "span-sw-003",
+    "criteria": "in_character",
+    "text": "As an AI language model I cannot provide information about Star Wars characters."
+  }')
+body=$(cat /tmp/eval_body.txt)
+check "tool/score/in_character-fail" "200" "$resp" "$body"
+echo "       $body"
+echo ""
+
+# ── /tool/score — missing text ───────────────────────────────────────────────
 echo "--- /tool/score — missing text (should 400)"
 resp=$(curl -s -o /tmp/eval_body.txt -w "%{http_code}" \
   -X POST "$BASE/tool/score" \
@@ -192,9 +218,10 @@ body=$(cat /tmp/eval_body.txt)
 check "tool/score/missing-text" "400" "$resp" "$body"
 echo ""
 
-# ── /requests debug buffer ───────────────────────────────────────────────────
+# ── /requests ─────────────────────────────────────────────────────────────────
 echo "--- /requests — debug buffer"
 resp=$(curl -s -o /tmp/eval_body.txt -w "%{http_code}" \
+  "${AUTH[@]}" \
   "$BASE/requests")
 body=$(cat /tmp/eval_body.txt)
 check "requests/GET" "200" "$resp" "$body"

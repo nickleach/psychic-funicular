@@ -68,7 +68,7 @@ export default async function handler(
     `[evaluate] mode=${mode} evaluator=${metadata.evaluator} request_id=${metadata.request_id} record_id=${metadata.record_id}`
   );
 
-  const { status, body } = await executeMode(mode, input);
+  const { status, body } = await executeMode(mode, input, req, metadata.evaluator);
 
   // Capture to debug store (fire-and-forget)
   capture({

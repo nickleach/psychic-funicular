@@ -1,33 +1,52 @@
-# arize-test-eval skill repo
+# star-wars-eval skill repo
 
-A custom skill for Arize Agent-as-a-Judge that calls the
-[arize-test-eval-api](https://github.com/your-org/arize-test-eval-api)
-scoring tool endpoint.
+A custom skill for Arize Agent-as-a-Judge that evaluates a **Star Wars chatbot**
+by calling the [arize-test-eval-api](https://github.com/nickleach/psychic-funicular)
+`/tool/score` endpoint.
+
+The harness reads `SKILL.md` and learns to call `POST /tool/score` with the
+chatbot's output text and a criterion, then writes the returned `label`, `score`,
+and `rationale` back as eval attributes on the span.
 
 ## Install as a custom skill in Arize
 
 1. Go to **More → Agent Skills** in your Arize space.
 2. Click **Add Skill → Custom skill**.
 3. Fill in:
-   - **Name:** `arize-test-eval`
-   - **Install source:** `your-org/arize-test-eval-api` (this repo, `skill-repo/` dir, or a fork)
-   - **Description:** `Calls POST /tool/score to score assistant outputs against named criteria (helpfulness, relevance, accuracy, tone).`
+   - **Name:** `star-wars-eval`
+   - **Install source:** `nickleach/psychic-funicular` (or your fork)
+   - **Description:** `Scores Star Wars chatbot outputs via POST /tool/score. Criteria: lore_accuracy, hallucination, relevance, in_character.`
    - **Installer:** `github`
    - **Env vars (optional):** `TEST_API_TOKEN=<your EVAL_AUTH_TOKEN value>`
 4. Save the skill.
 5. Attach it to an agent preset in **More → Agent Presets**.
 
-## What the harness gets
+## Suggested Agent-as-a-Judge scoring instructions
 
-The harness clones this repo and reads `SKILL.md`, which documents the
-`POST /tool/score` endpoint. The agent will call that endpoint when evaluating
-spans, then write `label`, `score`, and `explanation` (from `rationale`) back
-as eval attributes.
+Use something like this in your Agent-as-a-Judge evaluator config:
 
-## Customizing
+> For each span from the Star Wars chatbot, extract the assistant's response from
+> `attributes.output.value`. Call the `score` tool with:
+> - `criteria`: `lore_accuracy` to check canon accuracy, or `hallucination` to
+>   check for fabricated facts, or `in_character` if the bot has a persona.
+> - `text`: the assistant's response text.
+>
+> Use the returned `label` and `score` as the eval result.
+> Use `rationale` as the `explanation`.
+>
+> You may evaluate the same span on multiple criteria.
 
-- Change the `criteria` your harness passes to steer what is scored.
-- Add new criteria by extending the rubric table in `SKILL.md` and updating
-  `api/_lib/modes.ts` → `CRITERIA_RUBRICS` in the main API repo.
-- To gate the tool endpoint, set `EVAL_AUTH_TOKEN` on the server and
-  `TEST_API_TOKEN` in the skill's env vars.
+## Criteria reference
+
+| Criterion | Pass means |
+|---|---|
+| `lore_accuracy` | All facts match Star Wars canon |
+| `hallucination` | No invented characters, events, or planets |
+| `relevance` | Response addresses the user's question |
+| `in_character` | Persona is maintained throughout |
+
+## Auth
+
+If `EVAL_AUTH_TOKEN` is set on the server, add `TEST_API_TOKEN=<value>` in
+the skill's env vars section. The server compares it as
+`Authorization: Bearer <token>`.

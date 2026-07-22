@@ -1,57 +1,77 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { isAuthorized } from "../_lib/auth";
 import { capture } from "../_lib/store";
+import { CRITERIA, DEFAULT_CRITERIA_ID, getCriterion } from "../_lib/criteria";
 import type { ToolScoreRequest, ToolScoreResult } from "../_lib/types";
 
-const CRITERIA_RUBRICS: Record<
-  string,
-  { pass: string; fail: string; passScore: number; failScore: number }
-> = {
-  helpfulness: {
-    pass: "Response is actionable and directly addresses the request.",
-    fail: "Response is vague or does not address the request.",
-    passScore: 0.9,
-    failScore: 0.2,
-  },
-  relevance: {
-    pass: "Response is on-topic and pertinent to the input.",
-    fail: "Response diverges from the topic.",
-    passScore: 0.85,
-    failScore: 0.15,
-  },
-  accuracy: {
-    pass: "Response appears factually correct.",
-    fail: "Response contains suspect or incorrect information.",
-    passScore: 0.8,
-    failScore: 0.1,
-  },
-  tone: {
-    pass: "Response uses a professional and appropriate tone.",
-    fail: "Response tone is inappropriate or unprofessional.",
-    passScore: 0.95,
-    failScore: 0.3,
-  },
-};
+// Star Wars lore keywords used for a fast heuristic check
+const LORE_KEYWORDS =
+  /\b(sith|jedi|force|lightsaber|padawan|wookiee|droid|empire|rebel|clone|hutt|mandalorian|blaster|hyperspace|midi-chlorian|holocron|republic|separatist|apprentice|master|dark.?side|light.?side)\b/i;
+
+// Patterns that indicate a non-answer from the chatbot
+const VAGUE_ANSWER =
+  /^(yes|no|ok|sure|maybe|i (don't|do not) know|unclear|unknown|n\/a)\.?$/i;
 
 function scoreText(
   text: string,
-  criteria: string
+  criteriaId: string
 ): Omit<ToolScoreResult, "source" | "criteria"> {
-  const rubric = CRITERIA_RUBRICS[criteria] ?? CRITERIA_RUBRICS.helpfulness;
-  const wordCount = text.trim().split(/\s+/).length;
+  const criterion = getCriterion(criteriaId);
+  const trimmed = text.trim();
+  const wordCount = trimmed.split(/\s+/).length;
+  const isVague = VAGUE_ANSWER.test(trimmed) || wordCount <= 2;
 
-  // Heuristic: longer responses with substantive content tend to score higher
-  const hasContent = wordCount > 5;
-  const isVague = /^(yes|no|ok|sure|maybe|i don't know)\.?$/i.test(
-    text.trim()
-  );
+  if (isVague) {
+    return {
+      label: "fail",
+      score: criterion.failScore,
+      rationale: `Response is too vague to evaluate for ${criterion.label}. ${criterion.failRationale}`,
+    };
+  }
 
-  const pass = hasContent && !isVague;
-  return {
-    label: pass ? "pass" : "fail",
-    score: pass ? rubric.passScore : rubric.failScore,
-    rationale: pass ? rubric.pass : rubric.fail,
-  };
+  // Criteria-specific heuristics
+  switch (criteriaId) {
+    case "lore_accuracy":
+    case "hallucination": {
+      // Heuristic: response that references known lore terms is more likely grounded
+      const hasLore = LORE_KEYWORDS.test(trimmed);
+      return {
+        label: hasLore ? "pass" : "fail",
+        score: hasLore ? criterion.passScore : criterion.failScore,
+        rationale: hasLore
+          ? criterion.passRationale
+          : `${criterion.failRationale} No recognizable Star Wars terminology found.`,
+      };
+    }
+
+    case "in_character": {
+      // Heuristic: look for out-of-character signals
+      const breaksCharacter =
+        /\b(as an ai|i am a (language model|chatbot|assistant)|i cannot|i am unable)\b/i.test(
+          trimmed
+        );
+      return {
+        label: breaksCharacter ? "fail" : "pass",
+        score: breaksCharacter ? criterion.failScore : criterion.passScore,
+        rationale: breaksCharacter
+          ? criterion.failRationale
+          : criterion.passRationale,
+      };
+    }
+
+    case "relevance":
+    default: {
+      // Heuristic: substantive length + lore context implies relevance
+      const substantive = wordCount > 5 && LORE_KEYWORDS.test(trimmed);
+      return {
+        label: substantive ? "pass" : "fail",
+        score: substantive ? criterion.passScore : criterion.failScore,
+        rationale: substantive
+          ? criterion.passRationale
+          : criterion.failRationale,
+      };
+    }
+  }
 }
 
 export default async function handler(
@@ -70,7 +90,8 @@ export default async function handler(
 
   const body = (req.body ?? {}) as ToolScoreRequest;
   const text = String(body.text ?? "");
-  const criteria = String(body.criteria ?? "helpfulness").toLowerCase();
+  const rawCriteria = String(body.criteria ?? DEFAULT_CRITERIA_ID).toLowerCase();
+  const criteriaId = CRITERIA[rawCriteria] ? rawCriteria : DEFAULT_CRITERIA_ID;
   const recordId = String(body.record_id ?? "");
 
   if (!text) {
@@ -78,18 +99,18 @@ export default async function handler(
     return;
   }
 
-  const { label, score, rationale } = scoreText(text, criteria);
+  const { label, score, rationale } = scoreText(text, criteriaId);
 
   const result: ToolScoreResult = {
     label,
     score,
     rationale,
     source: "arize-test-eval-api/tool/score",
-    criteria,
+    criteria: criteriaId,
   };
 
   console.log(
-    `[tool/score] criteria=${criteria} record_id=${recordId} label=${label} score=${score}`
+    `[tool/score] criteria=${criteriaId} record_id=${recordId} label=${label} score=${score}`
   );
 
   capture({
@@ -97,7 +118,7 @@ export default async function handler(
     endpoint: "/tool/score",
     mode: "tool",
     recordId,
-    input: { text, criteria },
+    input: { text, criteria: criteriaId },
     responseStatus: 200,
     responseBody: result,
   }).catch(() => undefined);

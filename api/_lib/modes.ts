@@ -1,9 +1,11 @@
 import type { IncomingMessage } from "http";
 import type { ModeResult } from "./types";
 import { runLLMEval } from "./llm";
+import { resolveCriteria } from "./criteria";
 
-const DELIVERY_KEYWORDS =
-  /\b(deliver|delivery|uber\s*eats|doordash|grubhub|pickup|takeout|take.?out|ship|shipping)\b/i;
+// Star Wars lore keyword rule — fast, zero-cost default scoring
+const LORE_KEYWORDS =
+  /\b(sith|jedi|force|lightsaber|padawan|wookiee|droid|empire|rebel|clone|hutt|mandalorian|blaster|hyperspace|midi-chlorian|holocron|republic|separatist|apprentice|master|dark.?side|light.?side)\b/i;
 
 /**
  * Resolve the active test-mode string from (in priority order):
@@ -24,7 +26,6 @@ export function resolveMode(
 
   if (evaluatorName) {
     const lower = evaluatorName.toLowerCase();
-    // Support "stub-pass::my-real-evaluator-name" to embed mode in evaluator name
     const colonIdx = lower.indexOf("::");
     const candidate = colonIdx >= 0 ? lower.slice(0, colonIdx) : lower;
     if (isKnownMode(candidate)) return candidate;
@@ -40,9 +41,7 @@ function isKnownMode(s: string): boolean {
     return true;
   }
   if (
-    ["force-401", "force-403", "force-429", "force-500", "force-400"].includes(
-      s
-    )
+    ["force-401", "force-403", "force-429", "force-500", "force-400"].includes(s)
   ) {
     return true;
   }
@@ -56,15 +55,15 @@ function sleep(ms: number): Promise<void> {
 
 function keywordScore(input: Record<string, unknown>): ModeResult {
   const text = String(input.output ?? input.response ?? input.answer ?? "");
-  const match = DELIVERY_KEYWORDS.test(text);
+  const match = LORE_KEYWORDS.test(text);
   return {
     status: 200,
     body: {
       label: match ? "pass" : "fail",
       score: match ? 1 : 0,
       explanation: match
-        ? "Output contains a delivery-related term."
-        : "Output does not mention delivery.",
+        ? "Output references Star Wars lore (Jedi, Sith, the Force, etc.)."
+        : "Output contains no recognizable Star Wars lore terms.",
     },
   };
 }
@@ -75,7 +74,9 @@ function keywordScore(input: Record<string, unknown>): ModeResult {
  */
 export async function executeMode(
   mode: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  req: IncomingMessage,
+  evaluatorName?: string
 ): Promise<ModeResult> {
   // Force specific status codes to exercise Arize retry/backoff/fatal paths
   if (mode === "force-401") {
@@ -129,8 +130,14 @@ export async function executeMode(
   }
 
   if (mode === "llm") {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const criteriaId = resolveCriteria(
+      url.searchParams,
+      req.headers as Record<string, string | string[] | undefined>,
+      evaluatorName
+    );
     try {
-      const result = await runLLMEval(input);
+      const result = await runLLMEval(input, criteriaId);
       return { status: 200, body: result };
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
@@ -148,6 +155,6 @@ export async function executeMode(
     }
   }
 
-  // Default: rule-based keyword scoring
+  // Default: Star Wars lore keyword scoring
   return keywordScore(input);
 }
