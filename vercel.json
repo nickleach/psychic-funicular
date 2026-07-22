@@ -4,10 +4,5 @@
     { "source": "/tool/score", "destination": "/api/tool/score" },
     { "source": "/health", "destination": "/api/health" },
     { "source": "/requests", "destination": "/api/requests" }
-  ],
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "@vercel/node@3"
-    }
-  }
+  ]
 }
