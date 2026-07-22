@@ -4,13 +4,23 @@ import { resolveMode, executeMode } from "./_lib/modes";
 import { capture } from "./_lib/store";
 import type { ArizeEvalRequest } from "./_lib/types";
 
+const MAX_BODY_BYTES = 1024 * 512; // 512 KB — well within Vercel's 4.5 MB infra limit
+
 async function readBody(req: VercelRequest): Promise<unknown> {
   // Vercel's node runtime parses JSON bodies automatically
   if (req.body !== undefined) return req.body;
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let data = "";
-    req.on("data", (chunk) => (data += chunk));
+    let byteCount = 0;
+    req.on("data", (chunk: Buffer | string) => {
+      byteCount += Buffer.byteLength(chunk);
+      if (byteCount > MAX_BODY_BYTES) {
+        reject(new Error("Request body too large"));
+        return;
+      }
+      data += chunk;
+    });
     req.on("end", () => {
       try {
         resolve(JSON.parse(data));
@@ -18,6 +28,7 @@ async function readBody(req: VercelRequest): Promise<unknown> {
         resolve({});
       }
     });
+    req.on("error", reject);
   });
 }
 
@@ -36,7 +47,13 @@ export default async function handler(
     return;
   }
 
-  const rawBody = (await readBody(req)) as Partial<ArizeEvalRequest>;
+  let rawBody: Partial<ArizeEvalRequest>;
+  try {
+    rawBody = (await readBody(req)) as Partial<ArizeEvalRequest>;
+  } catch {
+    res.status(413).json({ error: "Request body too large" });
+    return;
+  }
 
   const metadata = rawBody.metadata ?? {
     request_id: "unknown",

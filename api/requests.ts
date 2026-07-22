@@ -1,10 +1,17 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { isAuthorized } from "./_lib/auth";
 import { list, clear } from "./_lib/store";
 
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
+  // /requests stores raw span input/output — always require auth
+  if (!isAuthorized(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
   // DELETE clears the buffer (useful between test runs)
   if (req.method === "DELETE") {
     await clear();

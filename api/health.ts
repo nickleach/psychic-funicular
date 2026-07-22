@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 export default function handler(_req: VercelRequest, res: VercelResponse): void {
-  const hasAuth = Boolean(process.env.EVAL_AUTH_TOKEN);
+  // Report presence of config without revealing whether auth is absent —
+  // avoid advertising "auth_enabled: false" to unauthenticated callers.
   const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);
   const hasAnthropic = Boolean(process.env.ANTHROPIC_API_KEY);
   const hasKV = Boolean(
@@ -12,7 +13,6 @@ export default function handler(_req: VercelRequest, res: VercelResponse): void 
     status: "ok",
     ts: new Date().toISOString(),
     config: {
-      auth_enabled: hasAuth,
       llm_provider: process.env.LLM_PROVIDER ?? "openai",
       llm_model:
         process.env.LLM_MODEL ??
