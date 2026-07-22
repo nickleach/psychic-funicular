@@ -4,5 +4,7 @@
     { "source": "/tool/score", "destination": "/api/tool/score" },
     { "source": "/health", "destination": "/api/health" },
     { "source": "/requests", "destination": "/api/requests" }
-  ]
+  ],
+  "buildCommand": "",
+  "outputDirectory": "."
 }
